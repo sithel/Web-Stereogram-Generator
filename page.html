@@ -1,0 +1,546 @@
+<html>
+<head>
+<title>Test 1 : Magic Eye </title>
+<script type="text/javascript" src="libs/jquery-1.7.1.min.js"></script>
+<!--  Totally from here: http://madkingsmusings.blogspot.com/2011/02/crop-and-upload-image-client-side.html -->
+<style>  
+  #cropWidget {
+	width 100px; 
+	height:100px; 
+	padding:5px;
+  } 
+  #surface {
+    position: absolute;
+    background:blue;  
+    padding: 1px;
+    width:100px; 
+    height:100px; 
+    z-index:100; 
+    opacity: 0.50;
+  } 
+  #canv1 {
+    position: absolute;
+    border:1px solid blue; 
+    width:100px; 
+    height:100px;
+  } 
+  #topLvlPattern, #notesSection, #topLvlBase, #topLvlResult {
+   float: left;
+   border: 2px solid black;
+   margin: 10px;
+   padding: 10px;
+  }
+  #notesSection {
+    clear:both;
+  }
+</style>
+
+<script>
+/**
+ * @param p.scaledWidth 
+ */
+var DepthRow = function (p) {
+    this.scaledWidth = p.scaledWidth;
+    this.refLeft = new Array();
+    this.refRight = new Array();
+    for(var i = 0; i < p.scaledWidth; i++){
+        this.refLeft.push(i);
+        this.refRight.push(i);
+    }
+}
+/**
+ * @param p.seperation - seperation between left and right
+ * @param p.center - point around which left and right are centered
+ */
+DepthRow.prototype.setRefLocation = function(p) {
+    var left = p.center - Math.floor(p.seperation/2);
+    var right = p.center + Math.floor(p.seperation/2);
+    var visible = true;
+    if (left < 0 || right >= this.scaledWidth)
+        return; 
+    var pointInLeft = this.refLeft[right];
+    if (pointInLeft != right) {   //already linked node
+        if (pointInLeft < left) {  //closer then old linked node set (smaller gap)
+            this.refRight[pointInLeft] = pointInLeft;  //removing old node linking
+            this.refLeft[right] = right;
+        } else {    // hidden by old linked node set
+            visible = false;
+        }
+    }
+    var pointInRight = this.refRight[left];
+    if (pointInRight != left){
+        if (pointInRight > right) {
+            this.refLeft[pointInRight] = pointInRight;
+            this.refRight[left] = left;
+        } else {
+            visible = false;
+        }
+    }
+    if (visible) {
+        this.refLeft[right] = left;
+        this.refRight[left] = right;
+    }
+}
+
+DepthRow.prototype.getLeft = function(point) {
+	if(this.refLeft.length <= point) {
+		throw new Error("Trying to get LEFT point "+point+" when max is "+this.refLeft.length);
+    }
+	return this.refLeft[point];
+}
+DepthRow.prototype.getRight = function(point) {
+    if(this.refRight.length <= point) {
+        throw new Error("Trying to get RIGHT point "+point+" when max is "+this.refRight.length);
+    }
+	return this.refRight[point];
+}
+
+/**
+ * @param p.scale
+ * @param p.maxDepth
+ * @param p.userDist
+ * @param p.seperationFactor
+ * @param p.depthImageWidth
+ * @param p.depthImageHeight
+ */
+var DepthModel = function (p) {
+	this.scale = p.scale;
+	this.scaledEyeSeperation = this.scale * StereoModel.EYE_SEPERATION();
+
+	this.minDepth = (p.seperationFactor * p.maxDepth * p.userDist) / ((1 - p.seperationFactor) * p.maxDepth + p.userDist);
+	this.minDepth = Math.round(this.minDepth);
+
+	this.sampleFactor = (p.maxDepth - this.minDepth) / 256;  // scale to 256 because that's the range available? verify
+	this.sampleFactor = Math.floor(this.sampleFactor);
+	this.maxSeperation = StereoModel.EYE_SEPERATION() * p.maxDepth / (p.maxDepth + p.userDist);
+	this.maxSeperation = Math.floor(this.maxSeperation);
+
+	this.scaledWidth = p.depthImageWidth * p.scale
+	this.maxDepth = p.maxDepth;
+	this.userDist = p.userDist;
+
+	this.rows = new Array();
+
+	var z = 0;
+	for(var y = 0; y < p.depthImageHeight; y++) {
+		var row = new DepthRow({ scaledWidth : this.scaledWidth});
+		for(var x = 0; x < this.scaledWidth; x++){
+			if( (x % p.scale) == 0) {  //only sample z once for ever scaled up set of points
+				z = grabDepthVal(x/p.scale,y);
+			}
+			var seperation = this.calcSeperation(z)
+			row.setRefLocation( { seperation: seperation, center: x });
+			if(y == 100) console.log(" 100th row : ["+x+"] for "+z+", sep "+seperation+" :: "+row.refLeft[x]+", "+row.refRight[x]);
+		}
+		this.rows.push(row);
+	}
+}
+/**
+ * @param z - color/depth sampled from depth image
+ *
+ */
+DepthModel.prototype.calcSeperation = function(z) {
+    var calcZ = this.maxDepth - z * this.sampleFactor;
+    var seperation = this.scaledEyeSeperation * calcZ / (calcZ + this.userDist);
+    return Math.floor(seperation);
+}
+
+
+
+var StereoModel = {
+    XDPI : 75,  //Dots Per Inch
+    EYE_SEPERATION : function() {
+        return this.XDPI * 2.5;
+    }, //we're talking inches, remember
+    MAX_SEPERATION : -9999, // ?? what units?
+    /**
+     @param p.userDist 
+     @param p.objDist
+     @param p.scale
+     @param p.ratio
+    */
+    go : function(p){
+	   this.userDist = (isNaN(p.userDist)) ? (12 * this.XDPI) : (p.userDist * this.XDPI);
+	   this.maxDepth = (isNaN(p.objDist)) ? this.userDist :  Math.round(this.userDist * p.objDist/100);
+	   this.seperationFactor = (isNaN(p.ratio)) ? 0.55 : p.ratio/100;
+	   this.scale = (isNaN(p.scale)) ? 2 : p.scale;
+	   //window.alert("Yo! : " + this.userDist+", "+this.maxDepth+", "+this.seperationFactor+", "+this.scale);
+	   console.log("User distance : "+this.userDist/this.XDPI+" inches");
+	   console.log("Max depth : "+this.maxDepth/this.XDPI+" inches");
+	   console.log("Seperation Factor : "+Math.round(this.seperationFactor*100)+"%");
+	   console.log("Scale : "+this.scale);
+	   //validate input and images
+	   var tempSrcDims = getSourceImageDim();
+	   console.log("Depth map image : ["+tempSrcDims.w+"x"+tempSrcDims.h+"]");
+	   this.depthModel = new DepthModel({
+		     scale : this.scale,
+		     maxDepth : this.maxDepth,
+		     userDist : this.userDist,
+		     seperationFactor : this.seperationFactor,
+		     depthImageWidth : tempSrcDims.w,
+		     depthImageHeight : tempSrcDims.h
+		   });
+	   testDepthModel(this.depthModel, this);
+	   this.scaleTile();
+	   this.displayResults();
+    },
+    scaleTile : function () {
+        var widthScale = this.depthModel.maxSeperation / tileCanvas.width;
+
+        var scaleTileCanvas = document.createElement("canvas");
+        scaleTileCanvas.width = tileCanvas.width*widthScale;
+        scaleTileCanvas.height = tileCanvas.height;
+        this.ctxtScaleTile = scaleTileCanvas.getContext('2d');
+//        var colorObj = this.grabColor({x: x, y: y, imgData: tileImageData, width: scaleTileCanvas.width}); //tiledPattern.getRGB(alteredX/scale,(int)alteredY);
+//        console.log("testColor1b  ["+x+","+y+"] : "+colorObj.r+"/"+colorObj.g+"/"+colorObj.b+"/"+colorObj.a);
+        console.log("Scaling it by : "+widthScale);
+        this.ctxtScaleTile.scale(widthScale, 1); //don't be retarded, remember this goes BEFORE the .drawImage call
+        this.ctxtScaleTile.drawImage(tileCanvas, 0, 0);
+
+        this.ctxtScaleTile.width = scaleTileCanvas.width;
+        this.ctxtScaleTile.height = scaleTileCanvas.height;
+        document.body.appendChild(scaleTileCanvas);
+        
+        var tileImageData = this.ctxtScaleTile.getImageData(0,0, this.ctxtScaleTile.width, this.ctxtScaleTile.height);
+        
+        console.log("Original tile image : ["+tileCanvas.width+"x"+tileCanvas.height+"]");
+        console.log("Scaled tile image : ["+this.ctxtScaleTile.width+"x"+this.ctxtScaleTile.height+"]");
+    },
+    /**
+     * @param p.x
+     * @param p.y
+     * @param p.imgData
+     * @param p.width
+     * @return an object with fields : r, g, b, a
+     */
+    grabColor : function(p){
+        var result = new Object();
+        p.x = Math.floor(p.x);
+        p.y = Math.floor(p.y);
+        var pixelLocation = (p.y*(p.width*4)) + (p.x*4);
+        if(p.x >= p.width)
+            throw new Error("You can't access x-point "+p.x+"-- it's only "+p.width+" px wide!");
+        if(isNaN(pixelLocation))
+            console.log("\t>>Grabbing color from index ("+p.x+","+p.y+") "+pixelLocation+" :: "+p.imgData.data.length+" : ["+p.imgData.data[pixelLocation]+"]");
+        result.r = p.imgData.data[pixelLocation + 0];
+        result.g = p.imgData.data[pixelLocation + 1];
+        result.b = p.imgData.data[pixelLocation + 2];
+        result.a = p.imgData.data[pixelLocation + 3];
+        //if(result.r == 0 && result.b == 0 && result.g == 0)
+          //  console.log("\t>>Fucking WHITE! ("+p.x+","+p.y+") "+pixelLocation+" :: "+p.imgData.data.length+" : ["+p.imgData.data[pixelLocation]+"]");
+    	return result;
+    },
+    /**
+     * @param p.x
+     * @param p.y
+     * @param p.imgData
+     * @param p.colorObj
+     * @param p.width
+     */
+    setColor: function (p) {
+        p.x = Math.floor(p.x);
+        p.y = Math.floor(p.y);
+        var pixelLocation = (p.y*(p.width*4)) + (p.x*4);
+        p.imgData.data[pixelLocation + 0] = p.colorObj.r;
+        p.imgData.data[pixelLocation + 1] = p.colorObj.g;
+        p.imgData.data[pixelLocation + 2] = p.colorObj.b;
+        p.imgData.data[pixelLocation + 3] = p.colorObj.a;
+    }, 
+    displayResults : function () {
+        var scaledSeperation = this.depthModel.maxSeperation  * this.scale;
+        var tileHeight = this.ctxtScaleTile.height;
+        var tempSrcDims = getSourceImageDim();
+        resultCanv.width = tempSrcDims.w * this.scale;
+        resultCanv.height = tempSrcDims.h;
+        var center = resultCanv.width / 2 - scaledSeperation / 2;
+        var pixelOffset = scaledSeperation - (center % scaledSeperation); // ??
+
+        var resultImageData = ctxtResult.createImageData(resultCanv.width, resultCanv.height);
+        console.log("Result Image Data made : ["+resultCanv.width+"x"+resultCanv.height+"] "+resultImageData.data.length);
+        var tileImageData = this.ctxtScaleTile.getImageData(0,0, this.ctxtScaleTile.width, this.ctxtScaleTile.height);
+        console.log("Tile Image Data made : ["+this.ctxtScaleTile.width+"x"+this.ctxtScaleTile.height+"] "+tileImageData.data.length);
+
+        console.log("Heading through "+this.depthModel.rows.length+" rows...");
+
+        /*
+        for(var i = 0; i < this.depthModel.rows.length; i++){
+	        for(var x = 0; x < resultCanv.width; x++){
+	        	var colorObj = this.grabColor({x: x%this.ctxtScaleTile.width, y: i%this.ctxtScaleTile.height, imgData: tileImageData, width: this.ctxtScaleTile.width}); //tiledPattern.getRGB(alteredX/scale,(int)alteredY);
+	        	this.setColor({x: x, y: i, imgData: resultImageData, colorObj: colorObj, width: resultCanv.width});  //tempResult.setRGB(x,y, rgb);
+	        }
+	    }
+	    */
+        for(var i = 0; i < this.depthModel.rows.length; i++){
+            var row = this.depthModel.rows[i];
+            if(i > resultCanv.height)
+                break;
+            var doublePixel = false;    // ?? 
+            var colorObj;
+            //console.log("      ... row "+i+" : "+resultCanv.width+" ("+center+")");
+            this.populateLeftHalf({
+                center : center, 
+                row: row, 
+                pixelOffset: pixelOffset, 
+                scaledSeperation: scaledSeperation,
+                resultImageData : resultImageData,
+                tileImageData : tileImageData, 
+                width : resultCanv.width,
+                y: i, 
+                maxY : tileHeight
+            });
+            this.populateRightHalf({
+                center : center, 
+                row: row, 
+                pixelOffset: pixelOffset, 
+                scaledSeperation: scaledSeperation,
+                resultImageData : resultImageData,
+                tileImageData : tileImageData, 
+                width : resultCanv.width,
+                y: i, 
+                maxY : tileHeight 
+            });
+            
+        }
+        //scale image here?
+        console.log("About to update result's canvas context...");
+        ctxtResult.putImageData(resultImageData, 0, 0);
+    },
+    populateLeftHalf : function (p) {
+        var tileImageData = p.tileImageData;
+        var colorObj;
+        var doublePixel = false;
+    	for(var x = p.center; x < p.width; x++){
+            if(p.row.getLeft(x) == x || p.row.getLeft(x) < p.center) {    //ignore cross-center connections
+                if (doublePixel) {
+                    doublePixel = false;
+                    colorObj = this.grabColor({x: x-1, y: p.y, imgData: p.resultImageData, width: resultCanv.width}); //tempResult.getRGB(x-1, y);
+                } else { //sample from the pattern at appropriate location
+                    var alteredX = (x + p.pixelOffset) % p.scaledSeperation;
+                    var alteredY = (x - p.center) / p.scaledSeperation;
+                    alteredY = (p.y + alteredY * 4.6875) % p.maxY;  //random const suggested by algorthm
+                    colorObj = this.grabColor({x: alteredX/this.scale, y: alteredY, imgData: tileImageData, width: this.ctxtScaleTile.width}); //tiledPattern.getRGB(alteredX/scale,(int)alteredY);
+                }
+            } else {
+                doublePixel = true;
+                colorObj = this.grabColor({x: p.row.getLeft(x), y: p.y, imgData: p.resultImageData, width: resultCanv.width}); //tempResult.getRGB(sR.getLeft(x),y);
+            }
+            this.setColor({x: x, y: p.y, imgData: p.resultImageData, colorObj: colorObj, width: resultCanv.width});  //tempResult.setRGB(x,y, rgb);
+        }
+    },
+    populateRightHalf : function (p) {
+    	var doublePixel = false;
+        for(var x = p.center - 1; x >= 0; x--){
+            if(p.row.getRight(x) == x){
+                if(doublePixel){
+                    doublePixel = false;
+                    colorObj = this.grabColor({x: x+1, y: p.y, imgData: p.resultImageData, width: p.width}); //tempResult.getRGB(x+1, y); 
+                }else{
+                    var alteredX = (x + p.pixelOffset) % p.scaledSeperation;
+                    var alteredY = (p.center - x) / p.scaledSeperation + 1;
+                    alteredY = (p.y + alteredY * 4.6875) % p.maxY; //random const suggested by algorthm
+                    colorObj = this.grabColor({x: alteredX/this.scale, y: alteredY, imgData: p.tileImageData, width: this.ctxtScaleTile.width}); //tiledPattern.getRGB(alteredX/scale,(int)alteredY);
+                }
+            } else {
+                doublePixel = true;
+                colorObj = this.grabColor({x: p.row.getRight(x), y: p.y, imgData: p.resultImageData, width: p.width}); //tempResult.getRGB(sR.getRight(x),y);
+            }
+            this.setColor({x: x, y: p.y, imgData: p.resultImageData, colorObj: colorObj, width: p.width});  //tempResult.setRGB(x,y, rgb);
+            
+        }
+    }
+    
+}
+var maxMsg = 200;
+function getSpanAsVal(id) {
+	return parseFloat($("#"+id).text());
+}
+function getSourceImageDim() {
+    return { w : depthImage.width, h : depthImage.height };
+}
+function grabDepthVal(x, y) {
+	var val = depthImageData.data[((y*(depthImage.width*4)) + (x*4)) + 2];  //TODO : grab color from depth image!
+	if(y == 100 && x < 200) console.log("\t"+val+", // x = "+x);
+	return val;
+}
+function testDepthModel(dM, m) { 
+    var hasVariance = false;
+    for(var y = 0; y < dM.rows.length; y++){
+        var row = dM.rows[y];
+        for(var x = 0; x < row.refLeft.length; x++){
+            if(x != row.refLeft[x])
+                hasVariance = true;
+        }
+    }
+    console.log("Ran test : rows' left has variance : "+hasVariance);
+    hasVariance = false;
+    for(var y = 0; y < dM.rows.length; y++){
+        var row = dM.rows[y];
+        for(var x = 0; x < row.refRight.length; x++){
+            if(x != row.refRight[x])
+                hasVariance = true;
+        }
+    }
+    console.log("Ran test : rows' right has variance : "+hasVariance);
+
+	console.log("Scale :"+m.scale);
+	console.log("Eye Seperation :"+m.EYE_SEPERATION());
+	console.log("Max Depth :"+m.maxDepth);
+	console.log("Min Depth :"+dM.minDepth);
+	console.log("Sample Factor :"+dM.sampleFactor);
+	console.log("Max Seperation :"+dM.maxSeperation);
+    var y = 100;
+    var row = dM.rows[y];
+    console.log("CalcSep 122 : "+dM.calcSeperation(122))
+    console.log("CalcSep 101 : "+dM.calcSeperation(101))
+    console.log("CalcSep 186 : "+dM.calcSeperation(186))
+    for(var i = 0; i < 200; i++){
+        console.log("\tL: "+row.refLeft[i]+"\tR: "+row.refRight[i]);
+    }
+}
+</script>
+</head>
+<body>
+    <div id='topLvlPattern'>
+        Pattern Image : <span id="patternW">--</span> x <span id="patternH">--</span>
+        <br>
+        <div id='cropWidget' height='100' width='100'>  
+          <div id='surface'></div>  
+          <canvas id='tileCanvas' height='100' width='100'></canvas>  
+        </div>
+    </div>
+    <div id='topLvlBase'>
+        Pattern Image : <span id="patternW">--</span> x <span id="patternH">--</span>
+        <br/>        
+        <canvas id='depthCanvas' ></canvas>  
+    </div>
+    <div id='topLvlResult'>
+        Distance from screen (inches) : <input type=range min=5 max=8 step="0.5" onchange='$("#userDistVal").text(this.value)'/>  <span id='userDistVal'></span> <br/>
+        Object distance (% of user distance) : <input type=range min=50 max=200 step="0.5" onchange='$("#objDistVal").text(this.value)'/>  <span id='objDistVal'></span> <br/>
+        Max/Max Ratio * 100 : <input type=range min=1 max=200 step="0.5" onchange='$("#ratioVal").text(this.value)'/>  <span id='ratioVal'></span> <br/>
+        Scale to work in while computing : <input type=range min=1 max=5 step="0.5" onchange='$("#scaleVal").text(this.value)'/>  <span id='scaleVal'></span> <br/>
+        <input type="button" value="Generate!" onClick="StereoModel.go(  { 
+            userDist : getSpanAsVal('userDistVal'),
+            objDist : getSpanAsVal('objDistVal'), 
+            ratio : getSpanAsVal('ratioVal'),
+            scale : getSpanAsVal('scaleVal') 
+            } )"/>
+        <br/>
+        <canvas id='resultCanv' height='100' width='100'></canvas> 
+    </div>
+    <div id='notesSection'>
+	    <ul>
+		    <li/><a href="http://madkingsmusings.blogspot.com/2011/02/crop-and-upload-image-client-side.html">Blog post with example on how to drag 'n drop images to view them</a>
+		    <li/><a href="https://developer.mozilla.org/En/HTML/Canvas/Pixel_manipulation_with_canvas">Info doc with snippets for getting and setting pixels on a Canvas</a>
+		    <li/><a href="http://www.colourlovers.com/pattern/templates/">Template Bases for repeating background</a>
+		    <li/><a href="http://www.phpied.com/3-ways-to-define-a-javascript-class/">Brush up on prototypes in JS (because I've been using CoffeeScript at work only)</a>
+		</ul>
+    </div>
+    <script>
+        if (window.File && window.FileReader && window.FileList && window.Blob) {
+          // Great success! All the File APIs are supported.
+        } else {
+          alert('The File APIs are not fully supported in this browser.');
+        }
+        var cropWidget = document.getElementById('cropWidget');
+        var surface = document.getElementById('surface');
+        var tileCanvas = document.getElementById('tileCanvas');
+        var ctxtTile = tileCanvas.getContext('2d');
+        var resultCanv = document.getElementById('resultCanv');
+        var ctxtResult = resultCanv.getContext('2d');
+        var depthCanvas = document.getElementById('depthCanvas');
+        var ctxtDepth = depthCanvas.getContext('2d');
+        var img = null;
+
+
+        var depthImage = new Image();
+        depthImage.src="views/v4.jpg";
+        var depthImageData = null;
+        depthImage.onload = function() { 
+            ctxtDepth.width = depthImage.naturalWidth;
+            ctxtDepth.height = depthImage.naturalHeight;
+            depthCanvas.width = ctxtDepth.width;
+            depthCanvas.height = ctxtDepth.height;
+            ctxtDepth.drawImage(depthImage,0,0);
+            depthImageData = ctxtDepth.getImageData(0, 0, depthImage.width, depthImage.height);
+        };
+
+        
+        function resize(comp, width, height) { 
+           comp.width = width; 
+           comp.height = height; 
+           comp.style.width = img.width + 'px'; 
+           comp.style.height = img.height + 'px';
+           $('#patternH').text(img.height + 'px');
+           $('#patternW').text(img.width + 'px');
+        }
+    
+        function displayImage(img) { 
+          resize(tileCanvas, img.width, img.height); 
+          resize(surface, img.width, img.height); 
+          resize(cropWidget, img); 
+          while(surface.childNodes[0]) 
+              surface.removeChild(surface.childNodes[0]);
+          surface.appendChild(img); 
+          ctxtTile.drawImage(img, 0, 0, img.width, img.height);
+        }
+        function manipBaseImage(image){
+            var x = image.width/2;
+            var y = image.height/2;
+            var myImageData = ctxtTile.getImageData(0, 0, x, y);
+            for(var i = 0; i < x*y*4; i++){
+                myImageData.data[i] = Math.round(Math.random() * 255);
+            }
+            ctxtResult.putImageData(myImageData, 0, 0);
+        }
+        function loadImg(imgFile) {
+          if (!imgFile.type.match(/image.*/)) 
+              return;
+          img = document.createElement("img"); 
+          img.id = "pic"; 
+          img.file = imgFile; 
+
+          try {
+              var reader = new FileReader();
+              reader.onload = function(e) {
+                //window.alert("Totally just read that file! BAM!");
+                img.onload = function() { 
+                  //  window.alert("Totally just read that img! DOUBLE BAM!");
+                    displayImage(img); 
+                    manipBaseImage(img);
+                }; 
+                img.src = e.target.result; 
+                //resize(canv2, 200, 200);
+              }; 
+              reader.onerror=function(e){
+                 window.alert("Well shit....  :"+e);
+                 switch(e.target.error.code) {
+                     case e.target.error.NOT_FOUND_ERR:
+                             alert("file not found");
+                             break;
+                     case e.target.error.NOT_READABLE_ERR:
+                             alert("file not readable");
+                             break;
+                     case e.target.error.ABORT_ERR:
+                             alert("aborted");
+                             break;
+                     default:
+                             alert('generic error?');
+                 }
+              };
+              reader.readAsDataURL(imgFile); 
+          } catch(err){
+              window.alert("Totally got an error :"+err);
+          }
+        }
+    
+        surface.addEventListener("dragover", function(e) {
+                e.preventDefault();
+            }, true); 
+        surface.addEventListener("drop", function(e) {
+                e.preventDefault();
+                loadImg(e.dataTransfer.files[0]);
+            }, true); 
+        ctxtTile.fillText("Drop image here", 10, 80); 
+    </script>
+</body>
+</html>
