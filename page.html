@@ -4,12 +4,12 @@
 <script type="text/javascript" src="libs/jquery-1.7.1.min.js"></script>
 <!--  Totally from here: http://madkingsmusings.blogspot.com/2011/02/crop-and-upload-image-client-side.html -->
 <style>  
-  #cropWidget {
+  .dragArea {
 	width 100px; 
 	height:100px; 
 	padding:5px;
   } 
-  #surface {
+  #surface, #depthSurface {
     position: absolute;
     background:blue;  
     padding: 1px;
@@ -18,7 +18,7 @@
     z-index:100; 
     opacity: 0.50;
   } 
-  #canv1 {
+  #canv1, #depthCanvas {
     position: absolute;
     border:1px solid blue; 
     width:100px; 
@@ -95,6 +95,8 @@ DepthRow.prototype.getRight = function(point) {
 	return this.refRight[point];
 }
 
+//=========================================================================
+	
 /**
  * @param p.scale
  * @param p.maxDepth
@@ -146,13 +148,13 @@ DepthModel.prototype.calcSeperation = function(z) {
 }
 
 
-
+//=================================================================
+	
 var StereoModel = {
     XDPI : 75,  //Dots Per Inch
     EYE_SEPERATION : function() {
         return this.XDPI * 2.5;
     }, //we're talking inches, remember
-    MAX_SEPERATION : -9999, // ?? what units?
     /**
      @param p.userDist 
      @param p.objDist
@@ -164,11 +166,11 @@ var StereoModel = {
 	   this.maxDepth = (isNaN(p.objDist)) ? this.userDist :  Math.round(this.userDist * p.objDist/100);
 	   this.seperationFactor = (isNaN(p.ratio)) ? 0.55 : p.ratio/100;
 	   this.scale = (isNaN(p.scale)) ? 2 : p.scale;
-	   //window.alert("Yo! : " + this.userDist+", "+this.maxDepth+", "+this.seperationFactor+", "+this.scale);
 	   console.log("User distance : "+this.userDist/this.XDPI+" inches");
 	   console.log("Max depth : "+this.maxDepth/this.XDPI+" inches");
 	   console.log("Seperation Factor : "+Math.round(this.seperationFactor*100)+"%");
 	   console.log("Scale : "+this.scale);
+	   
 	   //validate input and images
 	   var tempSrcDims = getSourceImageDim();
 	   console.log("Depth map image : ["+tempSrcDims.w+"x"+tempSrcDims.h+"]");
@@ -191,8 +193,6 @@ var StereoModel = {
         scaleTileCanvas.width = tileCanvas.width*widthScale;
         scaleTileCanvas.height = tileCanvas.height;
         this.ctxtScaleTile = scaleTileCanvas.getContext('2d');
-//        var colorObj = this.grabColor({x: x, y: y, imgData: tileImageData, width: scaleTileCanvas.width}); //tiledPattern.getRGB(alteredX/scale,(int)alteredY);
-//        console.log("testColor1b  ["+x+","+y+"] : "+colorObj.r+"/"+colorObj.g+"/"+colorObj.b+"/"+colorObj.a);
         console.log("Scaling it by : "+widthScale);
         this.ctxtScaleTile.scale(widthScale, 1); //don't be retarded, remember this goes BEFORE the .drawImage call
         this.ctxtScaleTile.drawImage(tileCanvas, 0, 0);
@@ -221,13 +221,11 @@ var StereoModel = {
         if(p.x >= p.width)
             throw new Error("You can't access x-point "+p.x+"-- it's only "+p.width+" px wide!");
         if(isNaN(pixelLocation))
-            console.log("\t>>Grabbing color from index ("+p.x+","+p.y+") "+pixelLocation+" :: "+p.imgData.data.length+" : ["+p.imgData.data[pixelLocation]+"]");
+            throw new Error("Grabbing color from index invalid location ("+p.x+","+p.y+") "+pixelLocation+" :: "+p.imgData.data.length+" : ["+p.imgData.data[pixelLocation]+"]");
         result.r = p.imgData.data[pixelLocation + 0];
         result.g = p.imgData.data[pixelLocation + 1];
         result.b = p.imgData.data[pixelLocation + 2];
         result.a = p.imgData.data[pixelLocation + 3];
-        //if(result.r == 0 && result.b == 0 && result.g == 0)
-          //  console.log("\t>>Fucking WHITE! ("+p.x+","+p.y+") "+pixelLocation+" :: "+p.imgData.data.length+" : ["+p.imgData.data[pixelLocation]+"]");
     	return result;
     },
     /**
@@ -260,23 +258,12 @@ var StereoModel = {
         var tileImageData = this.ctxtScaleTile.getImageData(0,0, this.ctxtScaleTile.width, this.ctxtScaleTile.height);
         console.log("Tile Image Data made : ["+this.ctxtScaleTile.width+"x"+this.ctxtScaleTile.height+"] "+tileImageData.data.length);
 
-        console.log("Heading through "+this.depthModel.rows.length+" rows...");
-
-        /*
-        for(var i = 0; i < this.depthModel.rows.length; i++){
-	        for(var x = 0; x < resultCanv.width; x++){
-	        	var colorObj = this.grabColor({x: x%this.ctxtScaleTile.width, y: i%this.ctxtScaleTile.height, imgData: tileImageData, width: this.ctxtScaleTile.width}); //tiledPattern.getRGB(alteredX/scale,(int)alteredY);
-	        	this.setColor({x: x, y: i, imgData: resultImageData, colorObj: colorObj, width: resultCanv.width});  //tempResult.setRGB(x,y, rgb);
-	        }
-	    }
-	    */
         for(var i = 0; i < this.depthModel.rows.length; i++){
             var row = this.depthModel.rows[i];
             if(i > resultCanv.height)
                 break;
             var doublePixel = false;    // ?? 
             var colorObj;
-            //console.log("      ... row "+i+" : "+resultCanv.width+" ("+center+")");
             this.populateLeftHalf({
                 center : center, 
                 row: row, 
@@ -306,7 +293,6 @@ var StereoModel = {
         ctxtResult.putImageData(resultImageData, 0, 0);
     },
     populateLeftHalf : function (p) {
-        var tileImageData = p.tileImageData;
         var colorObj;
         var doublePixel = false;
     	for(var x = p.center; x < p.width; x++){
@@ -318,7 +304,7 @@ var StereoModel = {
                     var alteredX = (x + p.pixelOffset) % p.scaledSeperation;
                     var alteredY = (x - p.center) / p.scaledSeperation;
                     alteredY = (p.y + alteredY * 4.6875) % p.maxY;  //random const suggested by algorthm
-                    colorObj = this.grabColor({x: alteredX/this.scale, y: alteredY, imgData: tileImageData, width: this.ctxtScaleTile.width}); //tiledPattern.getRGB(alteredX/scale,(int)alteredY);
+                    colorObj = this.grabColor({x: alteredX/this.scale, y: alteredY, imgData: p.tileImageData, width: this.ctxtScaleTile.width}); //tiledPattern.getRGB(alteredX/scale,(int)alteredY);
                 }
             } else {
                 doublePixel = true;
@@ -350,7 +336,6 @@ var StereoModel = {
     }
     
 }
-var maxMsg = 200;
 function getSpanAsVal(id) {
 	return parseFloat($("#"+id).text());
 }
@@ -397,23 +382,105 @@ function testDepthModel(dM, m) {
         console.log("\tL: "+row.refLeft[i]+"\tR: "+row.refRight[i]);
     }
 }
+
+var ImageManager = {
+	handleDragover : function(e){
+    	e.preventDefault();
+	},
+	handleDrop : function(e, canvas, ctxt, surface){
+        e.preventDefault();
+        window.alert("Done!");
+        this.loadImage(e.dataTransfer.files[0], canvas, ctxt, surface);
+	},
+	loadImage : function(imgFile, canvas, ctxt, surface) {
+        if (!imgFile.type.match(/image.*/)) 
+            return;
+        img = document.createElement("img"); 
+        img.id = "pic";
+        img.file = imgFile; 
+
+        var reader = new FileReader();
+        reader.onload = function(e) {
+          img.onload = function() { 
+              ImageManager.displayImage(img, canvas, ctxt, surface); 
+          }; 
+          img.src = e.target.result; 
+        }; 
+        reader.onerror=function(e){
+           window.alert("Well shit....  :"+e);
+           switch(e.target.error.code) {
+               case e.target.error.NOT_FOUND_ERR:
+                       alert("file not found");
+                       break;
+               case e.target.error.NOT_READABLE_ERR:
+                       alert("file not readable");
+                       break;
+               case e.target.error.ABORT_ERR:
+                       alert("aborted");
+                       break;
+               default:
+                       alert('generic error?');
+           }
+        };
+
+        try {
+            reader.readAsDataURL(imgFile); 
+        } catch(err){
+            window.alert("Totally got an error :"+err);
+        }
+      },
+      displayImage : function(img, canvas, ctxt, surface) { 
+        this.resize(canvas, img.width, img.height); 
+        this.resize(surface, img.width, img.height); 
+        while(surface.childNodes[0]) 
+            surface.removeChild(surface.childNodes[0]);
+        surface.appendChild(img); 
+        ctxt.drawImage(img, 0, 0, img.width, img.height);
+      },
+      resize : function(comp, width, height) { 
+          comp.width = width; 
+          comp.height = height; 
+          comp.style.width = img.width + 'px'; 
+          comp.style.height = img.height + 'px';
+          $('#patternH').text(img.height + 'px');
+          $('#patternW').text(img.width + 'px');
+       }
+};
+
+function setUp(){
+    var depthSurface = document.getElementById('depthSurface');
+    var depthCanvas = document.getElementById('depthCanvas');
+    var ctxtDepth = depthCanvas.getContext('2d');
+
+    ctxtDepth.fillText("Drop image here", 10, 80); 
+    
+    depthSurface.addEventListener("dragover", ImageManager.handleDragover, true); 
+    depthSurface.addEventListener("drop", function(e){
+        ImageManager.handleDrop(e, depthCanvas, ctxtDepth, depthSurface)
+    }, true); 
+}
 </script>
 </head>
-<body>
+<body onload="setUp()">
     <div id='topLvlPattern'>
         Pattern Image : <span id="patternW">--</span> x <span id="patternH">--</span>
         <br>
-        <div id='cropWidget' height='100' width='100'>  
+        <div height='100' width='100'  class="dragArea">  
           <div id='surface'></div>  
           <canvas id='tileCanvas' height='100' width='100'></canvas>  
         </div>
     </div>
     <div id='topLvlBase'>
-        Pattern Image : <span id="patternW">--</span> x <span id="patternH">--</span>
+        Depth Image : <span id="patternW">--</span> x <span id="patternH">--</span>
         <br/>        
-        <canvas id='depthCanvas' ></canvas>  
+        <div class="dragArea">
+            <div id="depthSurface" height='100' width='100'>
+            	<!-- image added here dynamically -->
+            </div>  
+	        <canvas id='depthCanvas' height='100' width='100'></canvas>  
+        </div>
     </div>
-    <div id='topLvlResult'>
+    <div id='topLvlResult' style="clear:both;">
         Distance from screen (inches) : <input type=range min=5 max=8 step="0.5" onchange='$("#userDistVal").text(this.value)'/>  <span id='userDistVal'></span> <br/>
         Object distance (% of user distance) : <input type=range min=50 max=200 step="0.5" onchange='$("#objDistVal").text(this.value)'/>  <span id='objDistVal'></span> <br/>
         Max/Max Ratio * 100 : <input type=range min=1 max=200 step="0.5" onchange='$("#ratioVal").text(this.value)'/>  <span id='ratioVal'></span> <br/>
