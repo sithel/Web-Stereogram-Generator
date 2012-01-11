@@ -9,7 +9,7 @@
 	height:100px; 
 	padding:5px;
   } 
-  #surface, #depthSurface {
+  #tileSurface, #depthSurface {
     position: absolute;
     background:blue;  
     padding: 1px;
@@ -18,7 +18,7 @@
     z-index:100; 
     opacity: 0.50;
   } 
-  #canv1, #depthCanvas {
+  #tileCanvas, #depthCanvas {
     position: absolute;
     border:1px solid blue; 
     width:100px; 
@@ -128,7 +128,7 @@ var DepthModel = function (p) {
 		var row = new DepthRow({ scaledWidth : this.scaledWidth});
 		for(var x = 0; x < this.scaledWidth; x++){
 			if( (x % p.scale) == 0) {  //only sample z once for ever scaled up set of points
-				z = grabDepthVal(x/p.scale,y);
+				z = ImageManager.grabDepthVal(x/p.scale,y);
 			}
 			var seperation = this.calcSeperation(z)
 			row.setRefLocation( { seperation: seperation, center: x });
@@ -172,7 +172,7 @@ var StereoModel = {
 	   console.log("Scale : "+this.scale);
 	   
 	   //validate input and images
-	   var tempSrcDims = getSourceImageDim();
+	   var tempSrcDims = ImageManager.getSourceImageDim();
 	   console.log("Depth map image : ["+tempSrcDims.w+"x"+tempSrcDims.h+"]");
 	   this.depthModel = new DepthModel({
 		     scale : this.scale,
@@ -182,7 +182,7 @@ var StereoModel = {
 		     depthImageWidth : tempSrcDims.w,
 		     depthImageHeight : tempSrcDims.h
 		   });
-	   testDepthModel(this.depthModel, this);
+	   //testDepthModel(this.depthModel, this);
 	   this.scaleTile();
 	   this.displayResults();
     },
@@ -247,13 +247,13 @@ var StereoModel = {
     displayResults : function () {
         var scaledSeperation = this.depthModel.maxSeperation  * this.scale;
         var tileHeight = this.ctxtScaleTile.height;
-        var tempSrcDims = getSourceImageDim();
+        var tempSrcDims = ImageManager.getSourceImageDim();
         resultCanv.width = tempSrcDims.w * this.scale;
         resultCanv.height = tempSrcDims.h;
         var center = resultCanv.width / 2 - scaledSeperation / 2;
         var pixelOffset = scaledSeperation - (center % scaledSeperation); // ??
 
-        var resultImageData = ctxtResult.createImageData(resultCanv.width, resultCanv.height);
+        var resultImageData = ImageManager.ctxtResult.createImageData(resultCanv.width, resultCanv.height);
         console.log("Result Image Data made : ["+resultCanv.width+"x"+resultCanv.height+"] "+resultImageData.data.length);
         var tileImageData = this.ctxtScaleTile.getImageData(0,0, this.ctxtScaleTile.width, this.ctxtScaleTile.height);
         console.log("Tile Image Data made : ["+this.ctxtScaleTile.width+"x"+this.ctxtScaleTile.height+"] "+tileImageData.data.length);
@@ -290,7 +290,7 @@ var StereoModel = {
         }
         //scale image here?
         console.log("About to update result's canvas context...");
-        ctxtResult.putImageData(resultImageData, 0, 0);
+        ImageManager.ctxtResult.putImageData(resultImageData, 0, 0);
     },
     populateLeftHalf : function (p) {
         var colorObj;
@@ -339,9 +339,6 @@ var StereoModel = {
 function getSpanAsVal(id) {
 	return parseFloat($("#"+id).text());
 }
-function getSourceImageDim() {
-    return { w : depthImage.width, h : depthImage.height };
-}
 function grabDepthVal(x, y) {
 	var val = depthImageData.data[((y*(depthImage.width*4)) + (x*4)) + 2];  //TODO : grab color from depth image!
 	if(y == 100 && x < 200) console.log("\t"+val+", // x = "+x);
@@ -384,15 +381,15 @@ function testDepthModel(dM, m) {
 }
 
 var ImageManager = {
+	
 	handleDragover : function(e){
     	e.preventDefault();
 	},
-	handleDrop : function(e, canvas, ctxt, surface){
+	handleDrop : function(e, canvas, ctxt, surface, container){
         e.preventDefault();
-        window.alert("Done!");
-        this.loadImage(e.dataTransfer.files[0], canvas, ctxt, surface);
+        this.loadImage(e.dataTransfer.files[0], canvas, ctxt, surface, container);
 	},
-	loadImage : function(imgFile, canvas, ctxt, surface) {
+	loadImage : function(imgFile, canvas, ctxt, surface, container) {
         if (!imgFile.type.match(/image.*/)) 
             return;
         img = document.createElement("img"); 
@@ -402,7 +399,7 @@ var ImageManager = {
         var reader = new FileReader();
         reader.onload = function(e) {
           img.onload = function() { 
-              ImageManager.displayImage(img, canvas, ctxt, surface); 
+              ImageManager.displayImage(img, canvas, ctxt, surface, container); 
           }; 
           img.src = e.target.result; 
         }; 
@@ -429,9 +426,10 @@ var ImageManager = {
             window.alert("Totally got an error :"+err);
         }
       },
-      displayImage : function(img, canvas, ctxt, surface) { 
+      displayImage : function(img, canvas, ctxt, surface, container) { 
         this.resize(canvas, img.width, img.height); 
         this.resize(surface, img.width, img.height); 
+        this.resize(container, img);
         while(surface.childNodes[0]) 
             surface.removeChild(surface.childNodes[0]);
         surface.appendChild(img); 
@@ -444,36 +442,76 @@ var ImageManager = {
           comp.style.height = img.height + 'px';
           $('#patternH').text(img.height + 'px');
           $('#patternW').text(img.width + 'px');
-       }
+       },
+      getSourceImageDim : function() {
+    	    return { w : this.depthCanvas.width, h : this.depthCanvas.height };
+      },
+      grabDepthVal : function (x, y) {
+        if(this.depthImageData == null) {
+        	this.depthImageData = this.ctxtDepth.getImageData(0, 0, this.depthCanvas.width, this.depthCanvas.height);
+        }
+		var val = this.depthImageData.data[((y*(this.depthCanvas.width*4)) + (x*4)) + 2];  //TODO : grab color from depth image!
+		//if(y == 100 && x < 200) console.log("\t"+val+", // x = "+x);
+		return val;
+	  }
 };
+
+if (window.File && window.FileReader && window.FileList && window.Blob) {
+  // Great success! All the File APIs are supported.
+} else {
+  alert('The File APIs are not fully supported in this browser.');
+}
+
 
 function setUp(){
     var depthSurface = document.getElementById('depthSurface');
     var depthCanvas = document.getElementById('depthCanvas');
+    var depthContainerDiv = document.getElementById('depthContainerDiv');
     var ctxtDepth = depthCanvas.getContext('2d');
-
+    ImageManager.depthCanvas = depthCanvas;
+    ImageManager.ctxtDepth = ctxtDepth;
+    ImageManager.depthImageData = null;
     ctxtDepth.fillText("Drop image here", 10, 80); 
-    
+
     depthSurface.addEventListener("dragover", ImageManager.handleDragover, true); 
     depthSurface.addEventListener("drop", function(e){
-        ImageManager.handleDrop(e, depthCanvas, ctxtDepth, depthSurface)
+        ImageManager.depthImageData = null;
+        ImageManager.handleDrop(e, depthCanvas, ctxtDepth, depthSurface, depthContainerDiv);
     }, true); 
+    
+    var tileSurface = document.getElementById('tileSurface');
+    var tileCanvas = document.getElementById('tileCanvas');
+    var tileContainerDiv = document.getElementById('tileContainerDiv');
+    var ctxtTile = tileCanvas.getContext('2d');
+
+    ctxtTile.fillText("Drop image here", 10, 80); 
+    
+    tileSurface.addEventListener("dragover", ImageManager.handleDragover, true); 
+    tileSurface.addEventListener("drop", function(e){
+        ImageManager.handleDrop(e, tileCanvas, ctxtTile, tileSurface, tileContainerDiv)
+    }, true); 
+
+    var resultCanv = document.getElementById('resultCanv');
+    var ctxtResult = resultCanv.getContext('2d');
+    ImageManager.ctxtResult = ctxtResult;
 }
 </script>
 </head>
 <body onload="setUp()">
     <div id='topLvlPattern'>
-        Pattern Image : <span id="patternW">--</span> x <span id="patternH">--</span>
+        Pattern Image :: Repeatable 
         <br>
-        <div height='100' width='100'  class="dragArea">  
-          <div id='surface'></div>  
+        <div height='100' width='100'  id='tileContainerDiv' class="dragArea">  
+          <div id='tileSurface'>
+          	<!--  image added here dynamically -->
+          </div>  
           <canvas id='tileCanvas' height='100' width='100'></canvas>  
         </div>
     </div>
     <div id='topLvlBase'>
-        Depth Image : <span id="patternW">--</span> x <span id="patternH">--</span>
+        Depth Image :: Black (far) & White (near)
         <br/>        
-        <div class="dragArea">
+        <div id='depthContainerDiv' class="dragArea">
             <div id="depthSurface" height='100' width='100'>
             	<!-- image added here dynamically -->
             </div>  
@@ -502,12 +540,10 @@ function setUp(){
 		    <li/><a href="http://www.phpied.com/3-ways-to-define-a-javascript-class/">Brush up on prototypes in JS (because I've been using CoffeeScript at work only)</a>
 		</ul>
     </div>
+    
+    
     <script>
-        if (window.File && window.FileReader && window.FileList && window.Blob) {
-          // Great success! All the File APIs are supported.
-        } else {
-          alert('The File APIs are not fully supported in this browser.');
-        }
+/*
         var cropWidget = document.getElementById('cropWidget');
         var surface = document.getElementById('surface');
         var tileCanvas = document.getElementById('tileCanvas');
@@ -560,7 +596,7 @@ function setUp(){
             ctxtResult.putImageData(myImageData, 0, 0);
         }
         function loadImg(imgFile) {
-          if (!imgFile.type.match(/image.*/)) 
+          if (!imgFile.type.match(/image.*//*)) 
               return;
           img = document.createElement("img"); 
           img.id = "pic"; 
@@ -608,6 +644,7 @@ function setUp(){
                 loadImg(e.dataTransfer.files[0]);
             }, true); 
         ctxtTile.fillText("Drop image here", 10, 80); 
+        */
     </script>
 </body>
 </html>
