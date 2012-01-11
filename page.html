@@ -250,7 +250,7 @@ var StereoModel = {
         var tempSrcDims = ImageManager.getSourceImageDim();
         resultCanv.width = tempSrcDims.w * this.scale;
         resultCanv.height = tempSrcDims.h;
-        var center = resultCanv.width / 2 - scaledSeperation / 2;
+        var center = Math.floor(resultCanv.width / 2) - Math.floor(scaledSeperation / 2);
         var pixelOffset = scaledSeperation - (center % scaledSeperation); // ??
 
         var resultImageData = ImageManager.ctxtResult.createImageData(resultCanv.width, resultCanv.height);
@@ -338,11 +338,6 @@ var StereoModel = {
 }
 function getSpanAsVal(id) {
 	return parseFloat($("#"+id).text());
-}
-function grabDepthVal(x, y) {
-	var val = depthImageData.data[((y*(depthImage.width*4)) + (x*4)) + 2];  //TODO : grab color from depth image!
-	if(y == 100 && x < 200) console.log("\t"+val+", // x = "+x);
-	return val;
 }
 function testDepthModel(dM, m) { 
     var hasVariance = false;
